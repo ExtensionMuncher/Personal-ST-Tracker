@@ -22,8 +22,9 @@ import { generateTrackerCommand, getTrackerCommand, saveTrackerToMessageCommand,
 import { FIELD_INCLUDE_OPTIONS } from "./src/trackerDataHandler.js";
 
 export const extensionName = "Personal-ST-Tracker";
-const extensionNameLong = `SillyTavern-${extensionName}`;
-export const extensionFolderPath = `scripts/extensions/third-party/${extensionNameLong}`;
+// The folder on disk is the repo name exactly as GitHub clones it.
+// ST installs third-party extensions under: scripts/extensions/third-party/<repoName>
+export const extensionFolderPath = `scripts/extensions/third-party/Personal-ST-Tracker`;
 
 if (!extension_settings[extensionName.toLowerCase()]) extension_settings[extensionName.toLowerCase()] = {};
 export const extensionSettings = extension_settings[extensionName.toLowerCase()];
