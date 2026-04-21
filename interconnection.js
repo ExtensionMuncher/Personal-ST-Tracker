@@ -1,249 +1,206 @@
-<!-- settings.html -->
-<div id="tracker_settings" class="extension_container">
-	<div class="inline-drawer">
-		<div class="inline-drawer-toggle inline-drawer-header">
-			<b>Tracker</b>
-			<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-		</div>
-		<div class="inline-drawer-content">
-			<!-- Tracker Settings -->
-			<div class="tracker-block flex-container">
-				<input id="tracker_enable" type="checkbox" />
-				<label for="tracker_enable">Enable Tracker</label>
-			</div>
-			<hr class="sysHR" />
+// #region YAML to JSON Conversion
 
-			<!-- Connection Profile -->
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_connection_profile">Connection Profile</label><br />
-				<small>Override connection profile for tracker generation:</small><br />
-				<select id="tracker_connection_profile" class="text_pole">
-					<option value="current">Same as current</option>
-				</select>
-			</div>
+/**
+ * Converts a YAML string to a JSON string.
+ * @param {string} yaml - The YAML string to convert.
+ * @returns {string} - The resulting JSON string.
+ */
+export function yamlToJSON(yaml) {
+	const lines = yaml.split("\n");
+	let result = {};
+	let path = [];
+	let currentIndent = -1;
+	let inMultilineString = false;
+	let multilineBuffer = "";
 
-			<!-- Completion Preset -->
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_completion_preset">Completion preset</label><br />
-				<small>
-					Override completion preset for tracker generation: <br />
-					(For Chat Completion Profiles, Make sure the preset has the same Chat completion Source as the profile)
-				</small><br />
-				<select id="tracker_completion_preset" class="text_pole">
-					<option value="current">Same as current</option>
-				</select>
-			</div>
+	for (let line of lines) {
+		// Remove trailing whitespace
+		line = line.trimEnd();
 
-			<!-- Generation Target -->
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_generation_target">Generation Target</label><br />
-				<small>Specifies who the tracker should auto-generate for: User, Character, Both, or None.</small><br />
-				<select id="tracker_generation_target" class="text_pole">
-					<option value="both">Both</option>
-					<option value="user">User</option>
-					<option value="character">Character</option>
-					<option value="none">None</option>
-				</select>
-			</div>
-			<!-- Show Popup For -->
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_show_popup_for">Show Popup For</label><br />
-				<small>Specifies for who there should be a popup to manualy enter the tracker data: User, Character, Both, or None.</small><br />
-				<select id="tracker_show_popup_for" class="text_pole">
-					<!-- Options will be populated dynamically -->
-				</select>
-			</div>
-			<!-- Tracker Format -->
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_format">Tracker Format</label><br />
-				<small>Choose the format for the tracker: YAML (recommended for lower token usage) or JSON (increases token count but may work better for struggling models).</small><br />
-				<select id="tracker_format" class="text_pole">
-					<option value="JSON">JSON</option>
-					<option value="YAML">YAML</option>
-				</select>
-			</div>
-			<hr class="sysHR" />
+		// Skip empty lines and comments
+		if (!inMultilineString && (line === "" || line.trim().startsWith("#"))) continue;
 
-			<!-- Preset Management -->
-			<div id="preset_settings">
-				<div class="tracker-block m-b-1 m-t-1">
-					<label for="tracker_preset_select">Presets</label>
-					<select id="tracker_preset_select" class="text_pole">
-						<!-- Options will be populated dynamically -->
-					</select>
-					<div class="tracker-preset-buttons">
-						<button id="tracker_preset_new" class="menu_button fa-solid fa-file-circle-plus interactable" title="Save preset as"></button>
-						<button id="tracker_preset_save" class="menu_button fa-solid fa-save interactable" title="Update current preset"></button>
-						<button id="tracker_preset_rename" class="menu_button fa-pencil fa-solid interactable" title="Rename current preset"></button>
-						<button id="tracker_preset_restore" class="menu_button fa-solid fa-recycle interactable" title="Restore current preset"></button>
-						<button id="tracker_preset_delete" class="menu_button fa-solid fa-trash-can interactable" title="Delete current preset"></button>
-						<input type="file" id="tracker_preset_import" style="display: none" accept=".json" />
-						<button id="tracker_preset_import_button" class="menu_button fa-solid fa-file-import interactable" title="Import tracker preset"></button>
-						<button id="tracker_preset_export" class="menu_button fa-solid fa-file-export interactable" title="Export current tracker preset"></button>
-					</div>
-				</div>
-			</div>
-			<hr class="sysHR" />
+		// Handle multiline string continuation
+		if (inMultilineString) {
+			multilineBuffer += "\n" + line;
+			if (line.trimEnd().endsWith('"')) {
+				// End of multiline string
+				setValueAtPath(result, path, multilineBuffer.slice(1, -1)); // Remove outer quotes
+				inMultilineString = false;
+				multilineBuffer = "";
+			}
+			continue;
+		}
 
-			<details>
-				<summary>Preset Settings</summary>
-				<!-- Preset Related Fields -->
-				<div id="preset_related_fields">
-					<!-- Generation Mode -->
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_generation_mode">Generation Mode</label><br />
-						<small
-							>Select how the tracker updates:<br />
-							- Inline: Adds the tracker to the beginning of every message.<br />
-							- Single-Stage: Sends one prompt to update the tracker.<br />
-							- Two-Stage: First summarizes changes, then updates the tracker.</small
-						><br />
-						<select id="tracker_generation_mode" class="text_pole">
-							<option value="inline">Inline</option>
-							<option value="single-stage">Single-Stage</option>
-							<option value="two-stage">Two-Stage</option>
-						</select>
-					</div>
-					<!-- Tracker Templates -->
-					<div id="generate_context_section" class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_context_prompt">Context Template</label><br />
-						<small
-							>Define the template for generating the tracker. Use macros like:<br />
-							{{trackerSystemPrompt}}, {{characterDescriptions}}, {{trackerExamples}}, {{recentMessages}}, {{currentTracker}}, {{trackerFormat}}, {{trackerFieldPrompt}}, {{firstStageMessage}} (Only in two stage mode).</small
-						><br />
-						<textarea id="tracker_context_prompt" class="text_pole" rows="5"></textarea>
-					</div>
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_system_prompt">System Prompt</label><br />
-						<small
-							>Define the system-level prompt for tracker generation. Use macros like:<br />
-							{{charNames}}, {{defaultTracker}}, {{trackerFormat}}.</small
-						><br />
-						<textarea id="tracker_system_prompt" class="text_pole" rows="5"></textarea>
-					</div>
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_request_prompt">Request Prompt</label><br />
-						<small
-							>Set the request prompt for generating the tracker. Available macros include:<br />
-							{{trackerFieldPrompt}}, {{trackerFormat}}, {{message}} (last message), {{firstStageMessage}} (Two-Stage mode only).</small
-						><br />
-						<textarea id="tracker_request_prompt" class="text_pole" rows="5"></textarea>
-					</div>
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_recent_messages">Recent Messages Template</label><br />
-						<small
-							>Template for recent messages in the tracker. Macros include:<br />
-							{{char}}, {{message}}, {{tracker}}, {{#if tracker}}...{{/if}}.</small
-						><br />
-						<textarea id="tracker_recent_messages" class="text_pole" rows="5"></textarea>
-					</div>
-					<div id="inline_request_section" class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_inline_request_prompt">Inline Request Prompt</label><br />
-						<small
-							>Configure the prompt injected at the start of every message in Inline mode. Use macros like:<br />
-							{{trackerFieldPrompt}}, {{trackerFormat}}, {{message}}.</small
-						><br />
-						<textarea id="tracker_inline_request_prompt" class="text_pole" rows="5"></textarea>
-					</div>
-					<div id="message_summarization_section">
-						<div class="tracker-block m-b-1 m-t-1">
-							<label for="tracker_message_summarization_context_template">Message Summarization Context Template</label><br />
-							<small
-								>Template used for summarizing the last message. Macros available:<br />
-								{{trackerSystemPrompt}}, {{characterDescriptions}}, {{trackerExamples}}, {{recentMessages}}, {{currentTracker}}, {{trackerFormat}}, {{trackerFieldPrompt}}, {{messageSummarizationSystemPrompt}}.</small
-							><br />
-							<textarea id="tracker_message_summarization_context_template" class="text_pole" rows="5"></textarea>
-						</div>
-						<div class="tracker-block m-b-1 m-t-1">
-							<label for="tracker_message_summarization_system_prompt">Message Summarization System Prompt</label><br />
-							<small
-								>System-level prompt for summarizing the last message. Available macros:<br />
-								{{charNames}}, {{defaultTracker}}, {{trackerFormat}}.</small
-							><br />
-							<textarea id="tracker_message_summarization_system_prompt" class="text_pole" rows="5"></textarea>
-						</div>
-						<div class="tracker-block m-b-1 m-t-1">
-							<label for="tracker_message_summarization_request_prompt">Message Summarization Request Prompt</label><br />
-							<small
-								>Set the request prompt for summarizing the last message. Macros:<br />
-								{{trackerFieldPrompt}}, {{trackerFormat}}, {{message}}.</small
-							><br />
-							<textarea id="tracker_message_summarization_request_prompt" class="text_pole" rows="5"></textarea>
-						</div>
-						<div class="tracker-block m-b-1 m-t-1">
-							<label for="tracker_recent_messages">Message Summarization Recent Messages Template</label><br />
-							<small
-								>Template for recent messages in the tracker. Macros include:<br />
-								{{char}}, {{message}}, {{tracker}}, {{#if tracker}}...{{/if}}.</small
-							><br />
-							<textarea id="tracker_message_summarization_recent_messages" class="text_pole" rows="5"></textarea>
-						</div>
-					</div>
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_character_description">Character Description Template</label><br />
-						<small
-							>Define the format for character descriptions in the tracker. Macros:<br />
-							{{char}}, {{charDescription}}.</small
-						><br />
-						<textarea id="tracker_character_description" class="text_pole" rows="5"></textarea>
-					</div>
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_mes_tracker_template">Message Tracker HTML</label><br />
-						<small
-							>Define the HTML for the tracker preview displayed with each message. Use macros like:<br />
-							{{key.subkey}}, {{#join "delimiter" arrayKey}}, {{#foreach objectOrArrayKey itemName}}...{{itemName.subKey}}...{{/foreach}}, {{#if key.subkey}}...{{/if}}.</small
-						><br />
-						<textarea id="tracker_mes_tracker_template" class="text_pole" rows="5"></textarea>
-					</div>
-					<div class="tracker-block m-b-1 m-t-1">
-						<label for="tracker_mes_tracker_javascript">Message Tracker JavaScript</label><br />
-						<small
-							>Define any custom javascript to be used in the tracker preview. The javascript should return an object with all the functions that can be accessed through SillyTavern.tracker</small
-						><br />
-						<textarea id="tracker_mes_tracker_javascript" class="text_pole" rows="5"></textarea>
-					</div>
-					<!-- Prompt Maker Button -->
-					<div class="tracker-block flex-container">
-						<label for="tracker_prompt_maker">Prompt Maker UI</label><br />
-						<small>This is where the tracker fields, default values, and example values are defined.</small><br />
-						<input id="tracker_prompt_maker" class="menu_button" type="submit" value="Prompt Maker" />
-					</div>
-				</div>
-			</details>
-			<hr class="sysHR" />
+		// Determine the indentation level
+		const indent = line.search(/\S|$/);
+		const isListItem = line.trim().startsWith("- ");
+		const keyValueSeparator = line.indexOf(": ");
 
-			<!-- Other Settings -->
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_number_of_messages">Number of Recent Messages to Include</label><br />
-				<small>Set how many recent messages are included in tracker generation prompts. In Inline mode, this defines how many messages have trackers added.</small><br />
-				<input max="99" min="1" class="text_pole" id="tracker_number_of_messages" type="number" />
-			</div>
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_generate_from_message">Message Number to Start Generating Tracker From</label>
-				<small>Specify which message (by number) the tracker starts generating from.</small><br />
-				<input max="99" min="1" class="text_pole" id="tracker_generate_from_message" type="number" />
-			</div>
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_minimum_depth">Minimum Depth</label>
-				<small>Specify the minimum depth for a tracker to be injected at.</small><br />
-				<input max="99" min="0" class="text_pole" id="tracker_minimum_depth" type="number" />
-			</div>
-			<div class="tracker-block m-b-1 m-t-1">
-				<label for="tracker_response_length">Response Length</label><br />
-				<small>Set a response token limit for tracker prompts. Leave blank or set to 0 to use the default response token limit.</small><br />
-				<input min="0" class="text_pole" id="tracker_response_length" type="number" />
-			</div>
-			<hr class="sysHR" />
-			<!-- Debug Mode -->
-			<div class="tracker-block flex-container">
-				<input id="tracker_debug" type="checkbox" />
-				<label for="tracker_debug">Enable Debug Logging</label>
-			</div>
-			<div class="tracker-block flex-container" style="flex-wrap: nowrap; overflow: hidden;">
-				<input id="tracker_reset_presets" class="menu_button" type="submit" value="Reset Default Presets" />
-				<label for="tracker_reset_presets"></label>
-			</div>
-			<hr class="sysHR" />
-		</div>
-	</div>
-</div>
+		// Adjust the path based on indentation
+		if (indent > currentIndent) {
+			path.push("");
+		} else if (indent < currentIndent) {
+			path = path.slice(0, indent / 2 + 1);
+		}
+		currentIndent = indent;
+
+		if (isListItem) {
+			// Handle list items
+			const value = line.trim().slice(2).trim();
+
+			if (!Array.isArray(getValueAtPath(result, path))) {
+				setValueAtPath(result, path, []);
+			}
+
+			const array = getValueAtPath(result, path);
+
+			if (value.startsWith('"') && value.endsWith('"')) {
+				array.push(value.slice(1, -1)); // Quoted string
+			} else {
+				array.push(parseValue(value));
+			}
+		} else if (keyValueSeparator !== -1) {
+			// Handle key-value pairs
+			const key = line.slice(0, keyValueSeparator).trim();
+			let value = line.slice(keyValueSeparator + 1).trim();
+            value = value.replace(/(?!#.*["'])#.*$/, "").trim();
+
+			// Ignore comments after a key-value separator
+			if (value.startsWith("#")) value = "";
+
+			path[path.length - 1] = key;
+
+			if (value.startsWith('"') && !value.endsWith('"')) {
+				// Start of a multiline string
+				inMultilineString = true;
+				multilineBuffer = value;
+			} else if (value.startsWith("[") && value.endsWith("]")) {
+				// Inline list
+				setValueAtPath(result, path, parseInlineList(value));
+			} else if (value.startsWith('"') && value.endsWith('"')) {
+				// Quoted string
+				setValueAtPath(result, path, value.slice(1, -1));
+			} else {
+				// Plain value
+				setValueAtPath(result, path, parseValue(value));
+			}
+		} else {
+			// Handle keys without values (objects)
+			let key = line.trim();
+			if (key.endsWith(":")) {
+				key = key.slice(0, -1).trimEnd();
+			}
+			path[path.length - 1] = key;
+			setValueAtPath(result, path, {});
+		}
+	}
+
+	return JSON.stringify(result, null, 2);
+}
+
+/**
+ * Sets a value in an object at the specified path.
+ * @param {object} obj - The object to modify.
+ * @param {Array} path - An array representing the path to the value.
+ * @param {*} value - The value to set.
+ */
+function setValueAtPath(obj, path, value) {
+	let current = obj;
+	for (let i = 0; i < path.length - 1; i++) {
+		const segment = path[i];
+		if (!current[segment]) {
+			current[segment] = {};
+		}
+		current = current[segment];
+	}
+	current[path[path.length - 1]] = value;
+}
+
+/**
+ * Retrieves a value from an object at the specified path.
+ * @param {object} obj - The object to access.
+ * @param {Array} path - An array representing the path to the value.
+ * @returns {*} - The value at the specified path, or null if not found.
+ */
+function getValueAtPath(obj, path) {
+	let current = obj;
+	for (let segment of path) {
+		if (!current[segment]) {
+			return undefined;
+		}
+		current = current[segment];
+	}
+	return current;
+}
+
+/**
+ * Parses a YAML value into a JavaScript value.
+ * @param {string} value - The value to parse.
+ * @returns {*} - The parsed value.
+ */
+function parseValue(value) {
+	if (value === "true") return true;
+	if (value === "false") return false;
+	if (!isNaN(value)) return Number(value);
+	return value;
+}
+
+/**
+ * Parses an inline YAML list into a JavaScript array.
+ * @param {string} listString - The inline list to parse.
+ * @returns {Array} - The resulting JavaScript array.
+ */
+function parseInlineList(listString) {
+	return listString
+		.slice(1, -1) // Remove brackets
+		.split(",") // Split by comma
+		.map((item) => item.trim().replace(/^"|"$/g, "")); // Remove quotes and trim
+}
+
+// #endregion
+
+// #region JSON to YAML Conversion
+
+/**
+ * Converts a JSON object to a YAML string.
+ * @param {object} json - The JSON object to convert.
+ * @param {number} [indent=0] - The current indentation level.
+ * @returns {string} - The resulting YAML string.
+ */
+export function jsonToYAML(json, indent = 0) {
+	let yaml = "";
+	const indentation = "  ".repeat(indent);
+
+	for (const key in json) {
+		const value = json[key];
+
+		if (typeof value === "object" && !Array.isArray(value) && value !== null) {
+			// Handle nested objects
+			yaml += `${indentation}${key}:\n`;
+			yaml += jsonToYAML(value, indent + 1);
+		} else if (Array.isArray(value)) {
+			// Handle arrays
+			const arrayValues = value.map((item) => (typeof item === "string" ? `"${item}"` : item.toString())).join(", ");
+			yaml += `${indentation}${key}: [${arrayValues}]\n`;
+		} else {
+			// Handle primitive values
+			yaml += `${indentation}${key}: ${parseValueToString(value)}\n`;
+		}
+	}
+
+	return yaml;
+}
+
+/**
+ * Converts a JavaScript value into a YAML-compatible string.
+ * @param {*} value - The value to convert.
+ * @returns {string} - The YAML-compatible string representation of the value.
+ */
+function parseValueToString(value) {
+	if (typeof value === "string") return `"${value}"`;
+	if (typeof value === "boolean" || typeof value === "number") return value.toString();
+	return "";
+}
+
+// #endregion

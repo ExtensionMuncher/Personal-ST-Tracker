@@ -1,105 +1,90 @@
-import { debug, getLastNonSystemMessageIndex, getPreviousNonSystemMessageIndex } from "../lib/utils.js";
-import { saveChatConditional, chat, chat_metadata } from "../../../../../script.js";
-import { generateTracker } from "./generation.js";
-import { FIELD_INCLUDE_OPTIONS, getTracker, OUTPUT_FORMATS } from "./trackerDataHandler.js";
-import { TrackerPreviewManager } from "./ui/trackerPreviewManager.js";
-import { extensionSettings } from "../index.js";
-import { isEnabled, toggleExtension } from "./settings/settings.js";
+import { TrackerPromptMaker } from "./components/trackerPromptMaker.js";
 
-export async function generateTrackerCommand(args, value){
-    let mesId = args?.message;
-    if (!mesId) {
-        mesId = getLastNonSystemMessageIndex();
-    }
-
-    if (!mesId) {
-        throw new Error(`No valid message found to generate a tracker.`);
-    }
-
-    let include = args?.include ? args.include.toUpperCase() : null;
-    if(!include || !Object.keys(FIELD_INCLUDE_OPTIONS).includes(include)) include = 'DYNAMIC';
-
-    const previousMesId = getPreviousNonSystemMessageIndex(mesId);
-    if (previousMesId !== -1) {
-        debug("Generating tracker for message " + mesId + " from command");
-        const tracker = await generateTracker(previousMesId, FIELD_INCLUDE_OPTIONS[include]);
-        
-        if (tracker) {
-            return JSON.stringify(tracker);
-        } else {
-            throw new Error(`Invalid response from tracker generation.`);
+export class TrackerPromptMakerModal {
+    constructor() {
+        if (TrackerPromptMakerModal.instance) {
+            return TrackerPromptMakerModal.instance;
         }
-    } else {
-        throw new Error(`No valid message found before message ${mesId} to generate a tracker.`);
-    }
-}
-
-export async function trackerOverrideCommand(args, value){
-    const trackerString = args?.tracker;
-
-    if (!trackerString) return;
-
-    const tracker = JSON.parse(trackerString);
-
-    if (!tracker) {
-        throw new Error(`Invalid tracker object provided.`);
+        TrackerPromptMakerModal.instance = this;
+        this.modal = null;
+        this.tracker = null;
+        this.onSave = null;
     }
 
-    if(!chat_metadata.tracker) chat_metadata.tracker = {};
-    chat_metadata.tracker.cmdTrackerOverride = tracker;
-    await saveChatConditional();
+    /**
+     * Displays the modal with the provided tracker object and onSave callback.
+     * @param {object} tracker - The tracker definition object to edit.
+     * @param {function} onSave - Callback function to handle the updated tracker.
+     */
+    show(tracker, onSave) {
+        this.tracker = tracker;
+        this.onSave = onSave;
 
-    return JSON.stringify(tracker);
-}
+        if (!this.modal) {
+            this.createModal();
+        }
 
-export async function saveTrackerToMessageCommand(args, value){
-    const mesId = args?.message ?? getLastNonSystemMessageIndex();
-    const trackerString = args?.tracker;
-
-    if (!mesId || !trackerString) {
-        throw new Error(`Invalid message or tracker provided.`);
+        this.updateContent();
+        document.body.appendChild(this.modal);
+        this.modal.showModal();
     }
 
-    const tracker = JSON.parse(trackerString);
+    /**
+     * Creates the modal dialog elements.
+     */
+    createModal() {
+        this.modal = document.createElement('dialog');
+        this.modal.className = 'tracker-prompt-maker-modal popup popup--animation-fast';
 
-    if (!tracker) {
-        throw new Error(`Invalid tracker object provided.`);
+        // Control Bar
+        const modalControlBar = document.createElement('div');
+        modalControlBar.className = 'tracker-modal-control-bar';
+
+        // Close Button
+        const modalCloseButton = document.createElement('div');
+        modalCloseButton.id = 'TrackerPromptModalClose';
+        modalCloseButton.className = 'fa-solid fa-circle-xmark hoverglow';
+        modalCloseButton.onclick = () => {
+            this.close();
+        };
+        modalControlBar.appendChild(modalCloseButton);
+
+        // Content Area
+        this.modalContent = document.createElement('div');
+        this.modalContent.className = 'tracker-modal-content';
+
+        // Append elements to modal
+        this.modal.appendChild(modalControlBar);
+        this.modal.appendChild(this.modalContent);
     }
 
-    chat[mesId].tracker = tracker;
-    await saveChatConditional();
-    TrackerPreviewManager.updatePreview(mesId);
+    /**
+     * Updates the modal content with the Tracker Prompt Maker interface.
+     */
+    updateContent() {
+        this.modalContent.innerHTML = '<h3 class="tracker-modal-title">Tracker Prompt Maker</h3>';
 
-    return JSON.stringify(tracker);
-}
+        // Initialize TrackerPromptMaker with the tracker and onSave callback
+        const trackerPromptMaker = new TrackerPromptMaker(this.tracker, (updatedTracker) => {
+            this.tracker = updatedTracker;
+            if (this.onSave) {
+                this.onSave(updatedTracker);
+            }
+        });
 
-export async function getTrackerCommand(args, value){
-    const mesId = args?.message ?? getLastNonSystemMessageIndex();
-
-    if (!mesId) {
-        throw new Error(`No valid message found to generate a tracker.`);
+        // Append the TrackerPromptMaker element to the modal content
+        $(this.modalContent).append(trackerPromptMaker.getElement());
     }
 
-    const trackerRaw = chat[mesId]?.tracker;
-
-    if (!trackerRaw) {
-        throw new Error(`No tracker found for message ${mesId}.`);
+    /**
+     * Closes the modal, removes it from the DOM, and resets the singleton instance.
+     */
+    close() {
+        if (this.modal) {
+            this.modal.close();
+            document.body.removeChild(this.modal);
+            this.modal = null;
+            TrackerPromptMakerModal.instance = null;
+        }
     }
-
-    const tracker = getTracker(trackerRaw, extensionSettings.trackerDef, FIELD_INCLUDE_OPTIONS.ALL, true, OUTPUT_FORMATS.JSON);
-
-    return JSON.stringify(tracker);
-}
-
-export async function stateTrackerCommand(args, value){
-    const enabledString = args?.enabled;
-
-    var enabled = isEnabled();
-
-    if (enabledString) {
-        var enabled = enabledString.toLowerCase() === 'true';
-        await toggleExtension(enabled);
-    }
-
-    return enabled ? "true" : "false";
 }

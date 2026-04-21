@@ -1,90 +1,103 @@
-import { TrackerPromptMaker } from "./components/trackerPromptMaker.js";
+import { extensionName } from '../index.js';
+import { eventSource } from '../../../../../script.js';
+import { log } from './utils.js';
 
-export class TrackerPromptMakerModal {
-    constructor() {
-        if (TrackerPromptMakerModal.instance) {
-            return TrackerPromptMakerModal.instance;
-        }
-        TrackerPromptMakerModal.instance = this;
-        this.modal = null;
-        this.tracker = null;
-        this.onSave = null;
+const NO_CAPTURES = '';
+const generationMutexEvents = {
+    MUTEX_CAPTURED: 'GENERATION_MUTEX_CAPTURED',
+    MUTEX_RELEASED: 'GENERATION_MUTEX_RELEASED',
+    TRACKER_PREVIEW_ADDED: 'TRACKER_PREVIEW_ADDED',
+    TRACKER_PREVIEW_UPDATED: 'TRACKER_PREVIEW_UPDATED'
+};
+/**
+ * @typedef {object} GenerationMutexEvent
+ * @property {string} extension_name - the name of the extension that captures the mutex
+ */
+
+let capturedBy = NO_CAPTURES;
+
+// --- BUG FIX: Chat load API spam prevention ---
+// When a chat opens, ST fires CHARACTER_MESSAGE_RENDERED once per historical
+// message. Without this guard, every message missing a tracker triggers a
+// separate API call. We suppress generation during the chat load window.
+let isChatLoading = false;
+let chatLoadingTimer = null;
+const CHAT_LOADING_DEBOUNCE_MS = 1500;
+
+export function setChatLoading() {
+    isChatLoading = true;
+    if (chatLoadingTimer) clearTimeout(chatLoadingTimer);
+    chatLoadingTimer = setTimeout(() => {
+        isChatLoading = false;
+        chatLoadingTimer = null;
+        log('Chat load window closed — generation re-enabled');
+    }, CHAT_LOADING_DEBOUNCE_MS);
+    log('Chat loading — generation suspended');
+}
+
+export function isChatCurrentlyLoading() {
+    return isChatLoading;
+}
+// --- END BUG FIX ---
+
+/**
+ * @return {void}
+ */
+export function registerGenerationMutexListeners() {
+    eventSource.on(generationMutexEvents.MUTEX_CAPTURED, onGenerationMutexCaptured);
+    eventSource.on(generationMutexEvents.MUTEX_RELEASED, onGenerationMutexReleased);
+}
+
+/**
+ * @return {boolean}
+ */
+export async function generationCaptured() {
+    if (capturedBy === extensionName) {
+        return true;
     }
 
-    /**
-     * Displays the modal with the provided tracker object and onSave callback.
-     * @param {object} tracker - The tracker definition object to edit.
-     * @param {function} onSave - Callback function to handle the updated tracker.
-     */
-    show(tracker, onSave) {
-        this.tracker = tracker;
-        this.onSave = onSave;
-
-        if (!this.modal) {
-            this.createModal();
-        }
-
-        this.updateContent();
-        document.body.appendChild(this.modal);
-        this.modal.showModal();
+    if (capturedBy === NO_CAPTURES) {
+        await eventSource.emit(generationMutexEvents.MUTEX_CAPTURED, {extension_name: extensionName});
+        return true;
     }
 
-    /**
-     * Creates the modal dialog elements.
-     */
-    createModal() {
-        this.modal = document.createElement('dialog');
-        this.modal.className = 'tracker-prompt-maker-modal popup popup--animation-fast';
+    return false;
+}
 
-        // Control Bar
-        const modalControlBar = document.createElement('div');
-        modalControlBar.className = 'tracker-modal-control-bar';
+/**
+ * @return {void}
+ */
+export async function releaseGeneration() {
+    await eventSource.emit(generationMutexEvents.MUTEX_RELEASED);
+}
 
-        // Close Button
-        const modalCloseButton = document.createElement('div');
-        modalCloseButton.id = 'TrackerPromptModalClose';
-        modalCloseButton.className = 'fa-solid fa-circle-xmark hoverglow';
-        modalCloseButton.onclick = () => {
-            this.close();
-        };
-        modalControlBar.appendChild(modalCloseButton);
+/**
+ * @param {GenerationMutexEvent} event
+ * @return {void}
+ */
+function onGenerationMutexCaptured(event) {
+    capturedBy = event.extension_name;
+    log('Generation mutex captured by', capturedBy);
+}
 
-        // Content Area
-        this.modalContent = document.createElement('div');
-        this.modalContent.className = 'tracker-modal-content';
+/**
+ * @return {void}
+ */
+function onGenerationMutexReleased() {
+    capturedBy = NO_CAPTURES;
+    log('Generation mutex released');
+}
 
-        // Append elements to modal
-        this.modal.appendChild(modalControlBar);
-        this.modal.appendChild(this.modalContent);
-    }
+/**
+ * @return {void}
+ */
+export async function emitTrackerPreviewAdded(mesId, element) {
+    await eventSource.emit(generationMutexEvents.TRACKER_PREVIEW_ADDED, mesId, element);
+}
 
-    /**
-     * Updates the modal content with the Tracker Prompt Maker interface.
-     */
-    updateContent() {
-        this.modalContent.innerHTML = '<h3 class="tracker-modal-title">Tracker Prompt Maker</h3>';
-
-        // Initialize TrackerPromptMaker with the tracker and onSave callback
-        const trackerPromptMaker = new TrackerPromptMaker(this.tracker, (updatedTracker) => {
-            this.tracker = updatedTracker;
-            if (this.onSave) {
-                this.onSave(updatedTracker);
-            }
-        });
-
-        // Append the TrackerPromptMaker element to the modal content
-        $(this.modalContent).append(trackerPromptMaker.getElement());
-    }
-
-    /**
-     * Closes the modal, removes it from the DOM, and resets the singleton instance.
-     */
-    close() {
-        if (this.modal) {
-            this.modal.close();
-            document.body.removeChild(this.modal);
-            this.modal = null;
-            TrackerPromptMakerModal.instance = null;
-        }
-    }
+/**
+ * @return {void}
+ */
+export async function emitTrackerPreviewUpdated(mesId, element) {
+    await eventSource.emit(generationMutexEvents.TRACKER_PREVIEW_UPDATED, mesId, element);
 }
