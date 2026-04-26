@@ -10,11 +10,23 @@ import { extensionSettings } from "../index.js";
 import { TrackerPreviewManager } from "./ui/trackerPreviewManager.js";
 
 /**
- * Flag that is true while a chat is loading (between CHAT_CHANGED and
- * when all historical messages have been rendered). During this window,
- * render handlers only save already-prepared trackers, never generate new ones.
+ * Monotonically increasing epoch counter. Incremented on every CHAT_CHANGED.
+ * Used to detect whether a generation event belongs to the current chat load
+ * or a stale one (e.g. from rapid switching).
  */
-let isChatLoading = false;
+let chatGenerationEpoch = 0;
+
+/**
+ * The epoch value when the current chat loading window began.
+ * Zero means no loading window is active.
+ * A generation event with loadingEpoch > 0 && loadingEpoch === chatGenerationEpoch
+ * means we're still within the loading window for the current chat.
+ * 
+ * Cleared either by:
+ *  - A render event for a NEW message (mesId >= lastChatLengthAtLoad)
+ *  - A 30-second fallback timeout
+ */
+let loadingEpoch = 0;
 
 /**
  * Tracks the chat length at the time CHAT_CHANGED fired.
@@ -23,27 +35,44 @@ let isChatLoading = false;
  */
 let lastChatLengthAtLoad = 0;
 
-const CHAT_LOAD_TIMEOUT_MS = 4000;
+const CHAT_LOAD_TIMEOUT_MS = 30000;
 
 /**
  * Event handler for when the chat changes.
- * Activates a loading window during which render handlers skip generation.
- * Captures chat length so historical messages remain blocked even after loading ends.
+ * Activates a loading window during which ALL generation is blocked.
+ * Uses an epoch counter so rapid chat switching cannot cause stale timeouts
+ * to prematurely end the loading window of a newer chat.
  * @param {object} args - The event arguments.
  */
 async function onChatChanged(args) {
-	isChatLoading = true;
+	chatGenerationEpoch++;
+	const startedEpoch = chatGenerationEpoch;
+	loadingEpoch = startedEpoch;
 	lastChatLengthAtLoad = chat.length;
 	await clearInjects();
 	if (!await isEnabled()) {
-		setTimeout(() => { isChatLoading = false; }, CHAT_LOAD_TIMEOUT_MS);
+		setTimeout(() => {
+			if (loadingEpoch === startedEpoch) loadingEpoch = 0;
+		}, CHAT_LOAD_TIMEOUT_MS);
 		return;
 	}
 	log("Chat changed:", args);
 	updateTrackerInterface();
 	//TrackerPreviewManager.init();
 	releaseGeneration();
-	setTimeout(() => { isChatLoading = false; }, CHAT_LOAD_TIMEOUT_MS);
+	// Fallback timeout: clear loading flag even if no new message arrives
+	setTimeout(() => {
+		if (loadingEpoch === startedEpoch) loadingEpoch = 0;
+	}, CHAT_LOAD_TIMEOUT_MS);
+}
+
+/**
+ * Returns true if a chat loading window is currently active for this chat.
+ * Compares the stored loadingEpoch against the current chatGenerationEpoch
+ * to detect stale loading windows from previous chat switches.
+ */
+function isChatLoading() {
+	return loadingEpoch > 0 && loadingEpoch === chatGenerationEpoch;
 }
 
 /**
@@ -55,8 +84,8 @@ async function onChatChanged(args) {
 async function onGenerateAfterCommands(type, options, dryRun) {
 	if(!extensionSettings.enabled) await clearInjects();
 	const enabled = await isEnabled();
-	if (!enabled || chat.length == 0 || isChatLoading || (selected_group && !is_group_generating) || (typeof type != "undefined" && !["normal","continue", "swipe", "regenerate", "impersonate", "group_chat"].includes(type))) {
-		debug("GENERATION_AFTER_COMMANDS Tracker skipped", {extenstionEnabled: extensionSettings.enabled, freeToRun: enabled, selected_group, is_group_generating, type, isChatLoading});
+	if (!enabled || chat.length == 0 || isChatLoading() || (selected_group && !is_group_generating) || (typeof type != "undefined" && !["normal","continue", "swipe", "regenerate", "impersonate", "group_chat"].includes(type))) {
+		debug("GENERATION_AFTER_COMMANDS Tracker skipped", {extenstionEnabled: extensionSettings.enabled, freeToRun: enabled, selected_group, is_group_generating, type, loadingEpoch, chatGenerationEpoch});
 		return;
 	}
 	if(type == "normal") type = undefined;
@@ -91,12 +120,19 @@ async function onMessageSent(mesId) {
  * Event handler for when a character's message is rendered.
  * During chat loading or for historical messages: only saves prepared trackers, never generates.
  * For new messages during conversation: generates trackers normally.
+ * Also clears the loading flag when a genuinely new message is rendered.
  */
 async function onCharacterMessageRendered(mesId) {
 	if (!await isEnabled() || !chat[mesId] || (chat[mesId].tracker && Object.keys(chat[mesId].tracker).length !== 0)) return;
 	
+	// Clear loading flag when a genuinely new message is rendered (not historical)
+	if (loadingEpoch > 0 && mesId >= lastChatLengthAtLoad) {
+		debug("New message detected, clearing chat loading flag");
+		loadingEpoch = 0;
+	}
+	
 	// Skip generation during chat loading window OR for historical messages
-	if (isChatLoading || mesId < lastChatLengthAtLoad) {
+	if (isChatLoading() || mesId < lastChatLengthAtLoad) {
 		log("CHARACTER_MESSAGE_RENDERED (skip generation)");
 		await addTrackerToMessage(mesId, true);
 		releaseGeneration();
@@ -115,12 +151,19 @@ async function onCharacterMessageRendered(mesId) {
  * Event handler for when a user's message is rendered.
  * During chat loading or for historical messages: only saves prepared trackers, never generates.
  * For new messages during conversation: generates trackers normally.
+ * Also clears the loading flag when a genuinely new message is rendered.
  */
 async function onUserMessageRendered(mesId) {
 	if (!await isEnabled() || !chat[mesId] || (chat[mesId].tracker && Object.keys(chat[mesId].tracker).length !== 0)) return;
 	
+	// Clear loading flag when a genuinely new message is rendered (not historical)
+	if (loadingEpoch > 0 && mesId >= lastChatLengthAtLoad) {
+		debug("New message detected, clearing chat loading flag");
+		loadingEpoch = 0;
+	}
+	
 	// Skip generation during chat loading window OR for historical messages
-	if (isChatLoading || mesId < lastChatLengthAtLoad) {
+	if (isChatLoading() || mesId < lastChatLengthAtLoad) {
 		log("USER_MESSAGE_RENDERED (skip generation)");
 		await addTrackerToMessage(mesId, true);
 		releaseGeneration();
